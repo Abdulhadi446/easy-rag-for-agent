@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+build/
+dist/
+*.egg-info/
+
+# easy-rag local data
+.chroma/
+*.sqlite3
+
+# secrets
+.env
+
+# editors / os
+.vscode/
+.idea/
+.DS_Store
+
+# test / tooling caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# generated demo frames (rebuilt by scripts/render_demo.sh)
+docs/demo/*.svg
+docs/demo/frames.txt

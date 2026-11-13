@@ -1,0 +1,14 @@
+Retrieval augmented generation, or RAG, has three stages.
+
+First, ingestion: documents are loaded, split into chunks, embedded, and stored in a
+vector database. Chunk size matters. Too small and the retriever loses context; too
+large and the answer gets diluted by irrelevant sentences.
+
+Second, retrieval: the user question is embedded with the same model, and the closest
+chunks are fetched, usually five to ten of them.
+
+Third, generation: the chunks are pasted into the prompt as numbered context and the
+language model answers while citing them.
+
+Common failure modes are stale indexes, embeddings computed with a different model than
+the query, and context windows stuffed with too many low quality chunks.

@@ -1,0 +1,31 @@
+[project]
+name = "easy-rag-for-agent"
+version = "0.1.0"
+description = "Terminal RAG workbench: drop in text, Markdown and PDF files, index them in Chroma, and chat with your own documents."
+readme = "README.md"
+requires-python = ">=3.11,<3.14"
+license = { text = "MIT" }
+dependencies = [
+    "textual>=1.0.0",
+    "chromadb>=1.0.0",
+    "pypdf>=5.0.0",
+    "httpx>=0.27.0",
+]
+
+[project.scripts]
+easy-rag = "easyrag.cli:main"
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0.0", "pytest-asyncio>=0.24.0"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/easyrag"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
