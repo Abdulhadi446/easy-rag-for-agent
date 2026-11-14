@@ -149,6 +149,8 @@ class EasyRagApp(App[None]):
         Binding("ctrl+r", "refresh_all", "Refresh"),
         Binding("ctrl+l", "clear_chat", "Clear chat"),
         Binding("ctrl+u", "parent_dir", "Parent dir"),
+        Binding("f2", "toggle_hybrid", "Hybrid"),
+        Binding("f3", "toggle_rerank", "Rerank"),
         Binding("escape", "focus_tree", "Files", show=False),
     ]
 
@@ -190,6 +192,9 @@ class EasyRagApp(App[None]):
         self.stream_wrap = self.query_one("#stream-wrap", VerticalScroll)
         self.stream = self.query_one("#stream", Static)
         self.status = self.query_one("#status", Static)
+        self.engine.on_status = lambda message: self.call_from_thread(
+            self._set_status, message
+        )
         self._welcome()
         self.refresh_sources()
         self._set_status()
@@ -201,7 +206,8 @@ class EasyRagApp(App[None]):
                 "[bold]easy-rag[/]  ·  [dim]local Chroma index, chat with your files[/]\n"
                 "[dim]1. pick files on the left (space marks, enter ingests)\n"
                 "2. ctrl+a indexes everything under the current folder\n"
-                "3. type a question below[/]"
+                "3. f2 hybrid search · f3 cross-encoder rerank (both optional)\n"
+                "4. type a question below[/]"
             )
         )
         self.chat.write("")
@@ -218,6 +224,12 @@ class EasyRagApp(App[None]):
             f"{files} file{'s' if files != 1 else ''}"
         )
         text = Text(left, style="dim")
+        for name, enabled in (("hybrid", self.settings.hybrid), ("rerank", self.settings.rerank)):
+            text.append("  ·  ", style="dim")
+            text.append(
+                f"{name} {'on' if enabled else 'off'}",
+                style="bold green" if enabled else "dim",
+            )
         if message:
             text.append("  ·  ", style="dim")
             text.append(message, style="bold")
@@ -254,7 +266,9 @@ class EasyRagApp(App[None]):
     def _describe_hits(self, hits: list[Hit]) -> Text:
         if not hits:
             return Text("no context retrieved", style="dim italic")
-        parts = Text("sources: ", style="dim")
+        mode = hits[0].metric
+        label = "sources: " if mode == "distance" else f"sources · {mode}: "
+        parts = Text(label, style="dim")
         for number, hit in enumerate(hits[:6], start=1):
             if number > 1:
                 parts.append("  ", style="dim")
@@ -325,7 +339,46 @@ class EasyRagApp(App[None]):
     def action_focus_tree(self) -> None:
         self.query_one("#tree", FileTree).focus()
 
+    def action_toggle_hybrid(self) -> None:
+        self.settings.hybrid = not self.settings.hybrid
+        self._set_status()
+        if self.settings.hybrid:
+            self.notify("Hybrid search on  ·  dense + BM25, fused with RRF", timeout=2)
+        else:
+            self.notify("Hybrid search off  ·  dense only", timeout=2)
+
+    def action_toggle_rerank(self) -> None:
+        self.settings.rerank = not self.settings.rerank
+        self._set_status()
+        if self.settings.rerank:
+            self.notify("Rerank on  ·  loading the cross-encoder…", timeout=2)
+            self._warm_worker()
+        else:
+            self.notify("Rerank off", timeout=2)
+
     # ------------------------------------------------------------------ workers
+    @work(thread=True, exclusive=True, group="rerank")
+    def _warm_worker(self) -> None:
+        try:
+            model = self.engine.warm_reranker()
+        except Exception as exc:  # noqa: BLE001
+            self.call_from_thread(self._rerank_failed, str(exc))
+            return
+        self.call_from_thread(self._rerank_ready, model)
+
+    def _rerank_ready(self, model: str) -> None:
+        if not self.settings.rerank:
+            return
+        self._set_status()
+        self.notify(f"Reranker ready  ·  {model.split('/')[-1]}", timeout=2.5)
+
+    def _rerank_failed(self, message: str) -> None:
+        if not self.settings.rerank:
+            return
+        self.settings.rerank = False
+        self._set_status("reranker unavailable")
+        self.chat.write(Text(f"✗ reranker: {message}", style="red"))
+
     def ingest(self, paths: list[Path]) -> None:
         if self._busy:
             self.notify("Busy - wait for the current job", severity="warning")

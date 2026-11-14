@@ -18,13 +18,17 @@ def test_settings_load_from_dotenv(tmp_path: Path, monkeypatch: pytest.MonkeyPat
         monkeypatch.delenv(name, raising=False)
     env = tmp_path / ".env"
     env.write_text(
-        "# comment\nOPENROUTER_API_KEY=sk-or-secret\nMODEL=openrouter/free\nEASYRAG_TOP_K=9\n",
+        "# comment\nOPENROUTER_API_KEY=sk-or-secret\nMODEL=openrouter/free\nEASYRAG_TOP_K=9\n"
+        "EASYRAG_CANDIDATES=30\nEASYRAG_HYBRID=on\nEASYRAG_RERANK=0\n",
         encoding="utf-8",
     )
     settings = Settings.load(env_file=env, cwd=tmp_path)
     assert settings.api_key == "sk-or-secret"
     assert settings.model == "openrouter/free"
     assert settings.top_k == 9
+    assert settings.candidates == 30
+    assert settings.hybrid is True
+    assert settings.rerank is False
 
 
 def test_settings_are_not_configured_without_key(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -33,6 +37,22 @@ def test_settings_are_not_configured_without_key(tmp_path: Path, monkeypatch: py
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     settings = Settings.load(env_file=tmp_path / "missing.env", cwd=tmp_path)
     assert settings.configured is False
+
+
+def test_settings_update_and_save_keep_retrieval_modes(tmp_path: Path):
+    settings = Settings()
+    settings.update(hybrid="yes", rerank="off", candidates="12", top_k="4")
+
+    assert settings.hybrid is True
+    assert settings.rerank is False
+    assert settings.candidates == 12
+
+    path = settings.save(tmp_path / "config.json")
+    data = json.loads(path.read_text(encoding="utf-8"))
+    assert data["hybrid"] is True
+    assert data["rerank"] is False
+    assert data["candidates"] == 12
+    assert data["rerank_model"]
 
 
 def test_public_dict_hides_the_key(tmp_path: Path):

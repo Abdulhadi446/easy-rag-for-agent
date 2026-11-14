@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/python-3.11%20%7C%203.12%20%7C%203.13-blue?style=flat-square" alt="python versions">
   <a href="https://textual.textualize.io/"><img src="https://img.shields.io/badge/UI-Textual-5c3cff?style=flat-square" alt="built with Textual"></a>
   <a href="https://www.trychroma.com/"><img src="https://img.shields.io/badge/vector%20store-Chroma-ff6b35?style=flat-square" alt="Chroma"></a>
-  <img src="https://img.shields.io/badge/tests-29%20passing-brightgreen?style=flat-square" alt="29 tests passing">
+  <img src="https://img.shields.io/badge/tests-45%20passing-brightgreen?style=flat-square" alt="45 tests passing">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="MIT license"></a>
   <a href="https://openrouter.ai/"><img src="https://img.shields.io/badge/LLM-OpenAI--compatible-8a2be2?style=flat-square" alt="OpenAI compatible"></a>
 </p>
@@ -33,7 +33,9 @@ file explorer, its own indexer, and its own chat, all rendered with
 - **No GPU, no Ollama, no local LLM.** Embeddings run on CPU through Chroma's bundled ONNX
   MiniLM model; the chat model is any OpenAI-compatible endpoint.
 - **Citations built in.** Every answer is grounded in numbered chunks and shows the source files
-  (with distances) underneath.
+  (with retrieval scores) underneath.
+- **Dense, hybrid or reranked.** Toggle BM25 + dense fusion and a local cross-encoder reranker
+  from the TUI or the CLI — no API key and no second service.
 - **Two ways to drive it.** A full TUI with a mouse-free file explorer, and a scriptable CLI for
   agents and cron jobs.
 
@@ -43,9 +45,9 @@ file explorer, its own indexer, and its own chat, all rendered with
 │ ● chroma-notes.md            │ › How does easy-rag measure similarity?        │
 │ ● rag-basics.txt             │ easy-rag uses cosine distance in Chroma, so a  │
 │   README.md                  │ lower score means a closer match [1].          │
-│                              │ sources: [1] chroma-notes.md                   │
+│                              │ sources · rerank: [1] chroma-notes.md          │
 └──────────────────────────────┴────────────────────────────────────────────────┘
- openrouter/free · 2 chunks · 2 files
+ openrouter/free · 2 chunks · 2 files · hybrid on · rerank on
 ```
 
 ## Screenshots
@@ -114,6 +116,7 @@ MODEL=openrouter/free
 ```bash
 uv run easy-rag add sample-docs
 uv run easy-rag ask "What distance metric does easy-rag use?"
+uv run easy-rag ask --hybrid --rerank "How does retrieval work?"
 ```
 
 Or just open the workbench and do it visually:
@@ -122,8 +125,9 @@ Or just open the workbench and do it visually:
 uv run easy-rag
 ```
 
-> **First run downloads ~80 MB** — Chroma fetches its ONNX embedding model once and caches it.
-> After that, indexing two sample files takes about five seconds on a laptop CPU.
+> **First run downloads two models.** Chroma fetches its ~80 MB ONNX embedding model once.
+> The first time you enable reranking, easy-rag also fetches a ~23 MB quantized cross-encoder.
+> Both are cached, and everything runs on the CPU.
 
 ---
 
@@ -141,6 +145,8 @@ The left third is a real directory tree. The right side is the conversation.
 | <kbd>ctrl</kbd>+<kbd>r</kbd> | Reload the tree and the index panel |
 | <kbd>ctrl</kbd>+<kbd>l</kbd> | Clear the chat and conversation memory |
 | <kbd>ctrl</kbd>+<kbd>u</kbd> | Go to the parent directory |
+| <kbd>f2</kbd> | Toggle hybrid search (dense + BM25, fused with RRF) |
+| <kbd>f3</kbd> | Toggle cross-encoder reranking (loads the local model on first use) |
 | <kbd>ctrl</kbd>+<kbd>q</kbd> | Quit |
 
 The **INDEX** panel lists every source already in the collection and how many chunks it
@@ -150,6 +156,32 @@ deleted from disk show up red and marked `missing`.
 Re-ingesting a file replaces its old chunks instead of duplicating them — the UI is safe to
 hammer while you edit notes.
 
+## Retrieval modes
+
+Three stages sit between your question and the prompt. Dense search is always on; the other two
+are independent switches, **off by default**.
+
+| Stage | TUI | CLI | What it does |
+| --- | --- | --- | --- |
+| Dense | always | always | Chroma cosine similarity over the whole collection |
+| Hybrid | <kbd>f2</kbd> | `--hybrid` / `--no-hybrid` | BM25 over every chunk, fused with the dense ranking by reciprocal rank fusion |
+| Rerank | <kbd>f3</kbd> | `--rerank` / `--no-rerank` | Scores each of the 20 candidates against the question with a local cross-encoder, keeps the best 5 |
+
+The status bar shows `hybrid on/off` and `rerank on/off`, and the source line says which score
+produced the final order (`distance`, `rrf` or `rerank`). TUI toggles apply to the current
+session; persist a default with:
+
+```bash
+easy-rag config --set hybrid=on
+easy-rag config --set rerank=on
+# or start the TUI with overrides for one run:
+easy-rag tui --hybrid --rerank
+```
+
+Hybrid is the biggest win for names, error codes, config keys and acronyms. Reranking is the
+biggest win when dense retrieval returns several plausible chunks but the right one is buried at
+position 8 or 12.
+
 ## Command line
 
 ```bash
@@ -157,6 +189,8 @@ easy-rag                          # open the TUI in the current folder
 easy-rag --path ~/notes           # open the TUI somewhere else
 easy-rag add ~/notes ~/papers/x.pdf
 easy-rag ask "Summarise the architecture" -k 8
+easy-rag ask --hybrid --rerank "What does the HNSW config change?"
+easy-rag ask --no-hybrid --no-rerank "Plain dense search"   # override config for one call
 easy-rag ls                       # what is indexed
 easy-rag rm chroma-notes.md       # drop one source
 easy-rag reset                    # wipe the collection
@@ -174,12 +208,12 @@ $ easy-rag add sample-docs
   + /home/you/easy-rag-for-agent/sample-docs/rag-basics.txt  (1 chunk)
 2 files, 2 chunks indexed
 
-$ easy-rag ask "What distance metric does easy-rag use?"
+$ easy-rag ask --hybrid --rerank "What distance metric does easy-rag use?"
 easy-rag stores chunks in Chroma with cosine distance, so a lower score means a closer
 match [1].
 
 sources:
-  [1] chroma-notes.md  (distance 0.432)
+  [1] chroma-notes.md  (rerank 0.8971)
 
 $ easy-rag ls
    1 chunk  /home/you/easy-rag-for-agent/sample-docs/chroma-notes.md
@@ -195,6 +229,7 @@ env file     /home/you/easy-rag-for-agent/.env
 model        openrouter/free
 base url     https://openrouter.ai/api/v1
 api key      set (sk-or-…)
+retrieval    hybrid on  ·  rerank on (Xenova/ms-marco-MiniLM-L-6-v2)  ·  top 5 of 20
 chroma       ok, 2 chunks, 2 sources
 embeddings   testing (first run downloads a 80MB ONNX model)…
 embeddings   ok
@@ -223,6 +258,11 @@ flowchart LR
 | `EASYRAG_CHUNK_SIZE` | `1200` | Characters per chunk |
 | `EASYRAG_CHUNK_OVERLAP` | `200` | Characters shared by neighbours |
 | `EASYRAG_TOP_K` | `5` | Chunks retrieved per question |
+| `EASYRAG_CANDIDATES` | `20` | Candidate pool per retriever before reranking |
+| `EASYRAG_HYBRID` | `off` | Fuse dense and BM25 rankings with RRF |
+| `EASYRAG_RERANK` | `off` | Rerank the candidate pool with a cross-encoder |
+| `EASYRAG_RERANK_MODEL` | `Xenova/ms-marco-MiniLM-L-6-v2` | ONNX cross-encoder (Hugging Face id or local export directory) |
+| `EASYRAG_CACHE_DIR` | `~/.cache/easy-rag` | Where reranker weights are cached |
 | `EASYRAG_MAX_TOKENS` | `1600` | Answer budget |
 | `EASYRAG_TEMPERATURE` | `0.2` | Sampling temperature |
 | `EASYRAG_TIMEOUT` | `180` | HTTP timeout in seconds |
@@ -246,14 +286,22 @@ flowchart LR
         L["load_file()<br/>utf-8 → latin-1 fallback<br/>pypdf per page"]
         C["split_text()<br/>1200 chars · 200 overlap<br/>paragraph aware"]
         EMB["Chroma embedding fn<br/>ONNX MiniLM (CPU)"]
-        R["query(question, k=5)<br/>cosine distance"]
+        R["retrieve()<br/>dense cosine top-N"]
+        K["BM25 over chunk text<br/>lexical top-N"]
+        H["RRF fusion<br/>optional · f2"]
+        RR["cross-encoder rerank<br/>optional · f3"]
         P["build_messages()<br/>numbered context + history"]
         M["stream_chat()<br/>SSE tokens"]
     end
 
     F --> L --> C --> EMB --> DB
-    DB --> R --> P --> M --> ANS["answer with [n] citations"]
+    DB --> R --> H
+    DB --> K --> H
+    H --> RR --> P --> M --> ANS["answer with [n] citations"]
 ```
+
+When a toggle is off, its stage passes the previous ranking straight through: dense-only uses
+cosine order, and hybrid-without-rerank keeps the fused order.
 
 ### Indexing a file
 
@@ -287,19 +335,28 @@ sequenceDiagram
     participant T as TUI
     participant E as RagEngine
     participant C as Chroma
+    participant X as Cross-encoder
     participant L as LLM
 
     U->>T: "What distance metric does easy-rag use?"
     T->>E: ask_stream(question, history)
-    E->>C: collection.query(query_texts=[q], n_results=5)
+    E->>C: dense query, top-20 candidates
     C-->>E: chunks + cosine distances
+    opt hybrid (f2 / --hybrid)
+        E->>C: fetch chunk texts
+        E->>E: BM25 scores + reciprocal rank fusion
+    end
+    opt rerank (f3 / --rerank)
+        E->>X: score (question, candidate) pairs
+        X-->>E: relevance scores, keep top 5
+    end
     E-->>T: Event("sources", hits)
     Note over T: the streaming panel opens
     E->>L: system prompt + numbered context + last 8 messages
     L-->>E: SSE: delta.content …
     E-->>T: Event("token", text) per delta
     E-->>T: Event("done", full answer)
-    T->>U: Markdown answer, then sources with distances
+    T->>U: Markdown answer, then sources with retrieval scores
 ```
 
 ### Data model
@@ -351,6 +408,9 @@ stateDiagram-v2
 | Delete-then-add per source | Re-indexing is idempotent; no duplicate chunks |
 | sha1(`source:page:index`) ids | Deterministic ids make the delete above trivial |
 | SSE parsing that ignores `reasoning` | Free routers stream chain-of-thought before the answer |
+| Hybrid search via RRF | Exact terms, acronyms and identifiers survive when embeddings drift; RRF needs no score calibration |
+| Local cross-encoder reranker | Real query-document relevance on CPU, no API key, 23 MB quantized model |
+| 20-candidate pool | Enough for a second stage to fix ordering without slow CPU reranking |
 | 12k-character context cap | Keeps prompts small enough for free tiers |
 | Last 8 messages of history | Follow-up questions without unbounded prompt growth |
 
@@ -361,13 +421,15 @@ easy-rag-for-agent/
 ├── src/easyrag/
 │   ├── config.py        # Settings, .env + config.json resolution, masking
 │   ├── ingest.py        # loaders, normalisation, paragraph-aware chunking
-│   ├── store.py         # Chroma wrapper: ingest, query, sources, reset
+│   ├── search.py        # BM25 tokenizer, lexical ranking, reciprocal rank fusion
+│   ├── reranker.py      # lazy ONNX cross-encoder, no torch
+│   ├── store.py         # Chroma wrapper: ingest, dense + hybrid query, sources
 │   ├── llm.py           # OpenAI-compatible streaming client (httpx + SSE)
-│   ├── rag.py           # prompt construction, ingestion summary, ask_stream
+│   ├── rag.py           # retrieval modes, prompt construction, ask_stream
 │   ├── cli.py           # argparse entry point for every subcommand
 │   └── tui/
 │       └── app.py       # Textual app: FileTree, RichLog chat, workers
-├── tests/               # 29 tests: ingest, store, SSE parsing, TUI pilot
+├── tests/               # 45 tests: ingest, store, search, rerank, SSE, TUI pilot
 ├── sample-docs/         # tiny corpus to try the app with
 ├── scripts/             # demo capture + GIF rendering
 └── docs/demo/           # generated screenshots and demo.gif
@@ -377,13 +439,14 @@ easy-rag-for-agent/
 
 ```bash
 uv sync --extra dev
-uv run pytest -q            # 29 passed
+uv run pytest -q            # 45 passed
 uv run easy-rag --version
 ```
 
-The test suite covers chunking edge cases, idempotent re-ingestion, delete-by-source, SSE
-parsing with a mocked transport (including reasoning deltas and error events), prompt assembly,
-and a real Textual pilot that types into the chat.
+The test suite covers chunking edge cases, idempotent re-ingestion, delete-by-source, BM25 and
+rank fusion, the reranking pipeline with an injected scorer, SSE parsing with a mocked transport
+(including reasoning deltas and error events), prompt assembly, and a real Textual pilot that
+types into the chat and toggles both retrieval modes.
 
 ### Regenerating the demo assets
 
@@ -409,12 +472,20 @@ a scripted model stream so the capture is deterministic and offline.
 | Scanned PDFs return nothing | There is no OCR. Run them through `ocrmypdf` first. |
 | Collection name error | Chroma requires 3–512 characters for collection names. |
 | TUI looks cramped | Resize the terminal; the layout needs roughly 80×24 minimum. |
+| First rerank pauses for a few seconds | The ~23 MB cross-encoder is being downloaded and loaded once. It is cached in `~/.cache/easy-rag/models`. |
+| `could not download reranker` | Check the network or set `EASYRAG_RERANK_MODEL` to another ONNX export. Hugging Face rate limits are per-IP; setting `HF_TOKEN` raises them. |
+| Hybrid search finds nothing useful | BM25 needs literal term overlap. For purely semantic paraphrases, turn f2 off and let dense search do the work. |
 
 ## Limitations
 
 - Supported inputs: `.txt`, `.text`, `.md`, `.markdown`, `.org`, `.rst`, `.pdf` (text-based).
 - One collection at a time; switching collections means changing `EASYRAG_COLLECTION`.
-- No reranker — the top-5 cosine hits go straight into the prompt.
+- The bundled reranker (`ms-marco-MiniLM-L-6-v2`) is English-focused and truncates each
+  candidate at 512 tokens.
+- BM25 uses a small English stop-word list; other languages still work, just without stop-word
+  filtering.
+- Hybrid search reads the chunk corpus on each query. That is fine for personal document sets
+  (thousands of chunks), not for a shared multi-million-chunk index.
 - The chat model must be reachable over HTTP and stream OpenAI-style SSE.
 
 ## Roadmap
@@ -424,10 +495,12 @@ a scripted model stream so the capture is deterministic and offline.
 - [x] Internal file explorer TUI with marking and an index panel
 - [x] Streaming answers with citations and conversation memory
 - [x] CLI for agents (`add`, `ask`, `ls`, `rm`, `reset`, `doctor`, `config`)
+- [x] Toggleable hybrid search (BM25 + dense, fused with RRF)
+- [x] Toggleable local cross-encoder reranking
+- [ ] Multilingual reranker and stemmed BM25
 - [ ] Pluggable embedding backends (OpenAI, Ollama) alongside the ONNX default
 - [ ] Multiple named collections in the TUI
 - [ ] Export a conversation to Markdown
-- [ ] Optional reranking pass before generation
 
 ## Built with
 
@@ -436,11 +509,15 @@ a scripted model stream so the capture is deterministic and offline.
 [Rich](https://rich.readthedocs.io/) ·
 [httpx](https://www.python-httpx.org/) ·
 [pypdf](https://pypdf.readthedocs.io/) ·
+[ONNX Runtime](https://onnxruntime.ai/) ·
+[Hugging Face](https://huggingface.co/) ·
 [uv](https://docs.astral.sh/uv/)
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The sample documents are original and free to reuse.
+MIT — see [LICENSE](LICENSE). The sample documents are original and free to reuse. The optional
+reranker weights (`ms-marco-MiniLM-L-6-v2`) are downloaded at runtime under their own
+Apache-2.0 license.
 
 ---
 

@@ -389,13 +389,18 @@ wheels = [
 
 [[package]]
 name = "easy-rag-for-agent"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "chromadb" },
     { name = "httpx" },
+    { name = "huggingface-hub" },
+    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
+    { name = "numpy", version = "2.5.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
+    { name = "onnxruntime" },
     { name = "pypdf" },
     { name = "textual" },
+    { name = "tokenizers" },
 ]
 
 [package.optional-dependencies]
@@ -408,10 +413,14 @@ dev = [
 requires-dist = [
     { name = "chromadb", specifier = ">=1.0.0" },
     { name = "httpx", specifier = ">=0.27.0" },
+    { name = "huggingface-hub", specifier = ">=0.23.0" },
+    { name = "numpy", specifier = ">=1.24.0" },
+    { name = "onnxruntime", specifier = ">=1.17.0" },
     { name = "pypdf", specifier = ">=5.0.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
     { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.24.0" },
     { name = "textual", specifier = ">=1.0.0" },
+    { name = "tokenizers", specifier = ">=0.20.0" },
 ]
 provides-extras = ["dev"]
 

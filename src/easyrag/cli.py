@@ -15,6 +15,7 @@ from .config import Settings, config_dir, data_dir
 from .ingest import collect_files
 from .llm import LLMError
 from .rag import RagEngine
+from .reranker import RerankError
 from .store import StoreError, VectorStore
 
 
@@ -31,6 +32,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     tui = sub.add_parser("tui", help="open the terminal interface (default)")
     tui.add_argument("path", nargs="?", type=Path, default=None)
+    _add_retrieval_flags(tui)
 
     add = sub.add_parser("add", help="index files or folders")
     add.add_argument("paths", nargs="+", type=Path)
@@ -39,6 +41,7 @@ def build_parser() -> argparse.ArgumentParser:
     ask = sub.add_parser("ask", help="ask one question and print the answer")
     ask.add_argument("question", nargs="+")
     ask.add_argument("-k", type=int, default=None, help="how many chunks to retrieve")
+    _add_retrieval_flags(ask)
 
     sub.add_parser("ls", help="list indexed sources")
     sub.add_parser("doctor", help="check configuration, index and embeddings")
@@ -54,8 +57,31 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _add_retrieval_flags(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument(
+        "--hybrid",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="combine dense search with BM25 keyword search (RRF)",
+    )
+    parser.add_argument(
+        "--rerank",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="rerank the candidate pool with a local cross-encoder",
+    )
+
+
 def _settings(args: argparse.Namespace) -> Settings:
-    return Settings.load(env_file=args.env_file)
+    settings = Settings.load(env_file=args.env_file)
+    overrides = {
+        name: getattr(args, name)
+        for name in ("hybrid", "rerank")
+        if getattr(args, name, None) is not None
+    }
+    if overrides:
+        settings.update(**overrides)
+    return settings
 
 
 def _chunks(count: int) -> str:
@@ -84,17 +110,22 @@ def cmd_add(args: argparse.Namespace, settings: Settings) -> int:
 
 def cmd_ask(args: argparse.Namespace, settings: Settings) -> int:
     engine = RagEngine(settings)
+    engine.on_status = lambda message: print(message, file=sys.stderr, flush=True)
     question = " ".join(args.question)
     try:
         answer, hits = engine.ask(question, k=args.k)
-    except (LLMError, StoreError) as exc:
+    except (LLMError, RerankError, StoreError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
     print(answer.strip() or "(empty answer)")
     if hits:
         print("\nsources:", file=sys.stderr)
         for number, hit in enumerate(hits, start=1):
-            print(f"  [{number}] {hit.label}  (distance {hit.score:.3f})", file=sys.stderr)
+            precision = 4 if hit.metric == "rerank" else 3
+            print(
+                f"  [{number}] {hit.label}  ({hit.metric} {hit.score:.{precision}f})",
+                file=sys.stderr,
+            )
     return 0
 
 
@@ -157,6 +188,12 @@ def cmd_doctor(settings: Settings) -> int:
     print(f"env file     {settings.env_file or '(none found)'}")
     print(f"model        {settings.model}")
     print(f"base url     {settings.base_url}")
+    print(
+        "retrieval    "
+        f"hybrid {'on' if settings.hybrid else 'off'}  ·  "
+        f"rerank {'on' if settings.rerank else 'off'} ({settings.rerank_model})  ·  "
+        f"top {settings.top_k} of {settings.candidates}"
+    )
     print(f"api key      {'set (' + settings.api_key[:6] + '…)' if settings.api_key else 'MISSING'}")
     if not settings.api_key:
         ok = False

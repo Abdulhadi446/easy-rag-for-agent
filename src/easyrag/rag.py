@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Iterator, Sequence
+from typing import Callable, Iterator, Sequence
 
 from .config import Settings
 from .ingest import SUPPORTED_SUFFIXES, collect_files
@@ -68,9 +68,25 @@ class IngestSummary:
 class RagEngine:
     """Owns the store and turns questions into grounded answers."""
 
-    def __init__(self, settings: Settings, store: VectorStore | None = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        store: VectorStore | None = None,
+        reranker: object | None = None,
+    ) -> None:
         self.settings = settings
         self.store = store or VectorStore(settings.db_path, settings.collection)
+        self.reranker = reranker
+        # Optional progress hook (loading a model can take a while on first use).
+        self.on_status: Callable[[str], None] | None = None
+
+    def _status(self, message: str) -> None:
+        if not self.on_status:
+            return
+        try:
+            self.on_status(message)
+        except Exception:  # noqa: BLE001 - progress must never break a query
+            pass
 
     # ------------------------------------------------------------------ ingest
     def ingest(self, targets: Sequence[Path | str], recursive: bool = True) -> IngestSummary:
@@ -99,7 +115,40 @@ class RagEngine:
 
     # ------------------------------------------------------------------ search
     def retrieve(self, question: str, k: int | None = None) -> list[Hit]:
-        return self.store.query(question, k=k or self.settings.top_k)
+        """Dense, optional hybrid, then optional cross-encoder reranking."""
+        limit = k or self.settings.top_k
+        candidates = max(limit, self.settings.candidates)
+        if self.settings.hybrid:
+            hits = self.store.query_hybrid(question, k=candidates, candidates=candidates)
+        else:
+            hits = self.store.query(
+                question, k=candidates if self.settings.rerank else limit
+            )
+        if self.settings.rerank and hits:
+            hits = self.rerank(question, hits, limit)
+        return hits[:limit]
+
+    def _get_reranker(self):  # noqa: ANN202 - lazy import keeps startup light
+        if self.reranker is None:
+            self._status("loading reranker…")
+            from .reranker import CrossEncoderReranker
+
+            self.reranker = CrossEncoderReranker(self.settings.rerank_model)
+        return self.reranker
+
+    def warm_reranker(self) -> str:
+        """Load the reranker ahead of the first question; returns the model name."""
+        reranker = self._get_reranker()
+        reranker.load()  # type: ignore[attr-defined]
+        return str(getattr(reranker, "model", self.settings.rerank_model))
+
+    def rerank(self, question: str, hits: Sequence[Hit], k: int) -> list[Hit]:
+        """Reorder candidates with the cross-encoder and keep the best ``k``."""
+        reranker = self._get_reranker()
+        self._status(f"reranking {len(hits)} candidates…")
+        scores = reranker.score(question, [hit.text for hit in hits])  # type: ignore[attr-defined]
+        ranked = sorted(zip(hits, scores), key=lambda pair: pair[1], reverse=True)[:k]
+        return [replace(hit, score=float(score), metric="rerank") for hit, score in ranked]
 
     def sources(self) -> list[SourceInfo]:
         return self.store.sources()

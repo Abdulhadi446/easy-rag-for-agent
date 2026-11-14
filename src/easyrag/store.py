@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any, Iterable, Sequence
 
 from .ingest import Chunk, chunk_documents, load_file
+from .search import BM25, reciprocal_rank_fusion
 
 
 class StoreError(RuntimeError):
@@ -27,6 +28,8 @@ class Hit:
     chunk: int
     score: float
     page: int | None = None
+    id: str = ""
+    metric: str = "distance"
 
     @property
     def label(self) -> str:
@@ -159,10 +162,11 @@ class VectorStore:
             raise StoreError(f"query failed: {exc}") from exc
 
         hits: list[Hit] = []
+        ids = (result.get("ids") or [[]])[0]
         documents = (result.get("documents") or [[]])[0]
         metadatas = (result.get("metadatas") or [[]])[0]
         distances = (result.get("distances") or [[]])[0]
-        for document, metadata, distance in zip(documents, metadatas, distances):
+        for chunk_id, document, metadata, distance in zip(ids, documents, metadatas, distances):
             if document is None:
                 continue
             metadata = metadata or {}
@@ -173,6 +177,75 @@ class VectorStore:
                     chunk=int(metadata.get("chunk", 0) or 0),
                     page=int(metadata["page"]) if metadata.get("page") is not None else None,
                     score=float(distance),
+                    id=str(chunk_id),
+                    metric="distance",
+                )
+            )
+        return hits
+
+    def corpus(self) -> tuple[list[str], list[str], list[dict[str, Any]]]:
+        """Every chunk id, text and metadata, aligned by position.
+
+        Hybrid search needs the whole corpus for BM25. Embeddings are deliberately
+        excluded so this stays cheap to fetch.
+        """
+        try:
+            result = self.collection.get(include=["documents", "metadatas"])
+        except Exception as exc:  # noqa: BLE001
+            raise StoreError(f"could not read the index: {exc}") from exc
+
+        ids: list[str] = []
+        documents: list[str] = []
+        metadatas: list[dict[str, Any]] = []
+        for chunk_id, document, metadata in zip(
+            result.get("ids") or [],
+            result.get("documents") or [],
+            result.get("metadatas") or [],
+        ):
+            if document is None:
+                continue
+            ids.append(str(chunk_id))
+            documents.append(document)
+            metadatas.append(dict(metadata or {}))
+        return ids, documents, metadatas
+
+    def query_hybrid(self, text: str, k: int = 5, candidates: int | None = None) -> list[Hit]:
+        """Dense cosine plus BM25, fused with reciprocal rank fusion.
+
+        The ``rrf`` score is higher-is-better and only meaningful for ordering; it is
+        not comparable to a cosine distance.
+        """
+        if not text.strip():
+            return []
+        candidates = max(k, candidates or k)
+        dense = self.query(text, k=candidates)
+        ids, documents, metadatas = self.corpus()
+        if not ids:
+            return dense[:k]
+
+        position = {chunk_id: index for index, chunk_id in enumerate(ids)}
+        dense_ranking = [position[hit.id] for hit in dense if hit.id in position]
+        lexical_ranking = [index for index, _ in BM25(documents).top(text, candidates)]
+        if not lexical_ranking:
+            return dense[:k]
+        if not dense_ranking:
+            dense_ranking = lexical_ranking[:candidates]
+
+        fused = reciprocal_rank_fusion([dense_ranking, lexical_ranking])
+        ordered = sorted(fused.items(), key=lambda item: (-item[1], item[0]))[:k]
+
+        hits: list[Hit] = []
+        for index, score in ordered:
+            metadata = metadatas[index]
+            hits.append(
+                Hit(
+                    text=documents[index],
+                    source=str(metadata.get("source", "?")),
+                    chunk=int(metadata.get("chunk", 0) or 0),
+                    page=int(metadata["page"]) if metadata.get("page") is not None else None,
+                    score=float(score),
+                    id=ids[index],
+                    metric="rrf",
                 )
             )
         return hits

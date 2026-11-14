@@ -116,3 +116,23 @@ async def test_space_marks_a_file(tmp_path: Path):
         if tree.cursor_node and tree.cursor_node.data and tree.cursor_node.data.path.is_file():
             await pilot.press("space")
             assert tree.marked
+
+
+async def test_f2_and_f3_toggle_the_retrieval_modes(tmp_path: Path):
+    app = make_app(tmp_path)
+    app.engine.store = FakeStore()
+    app.engine.warm_reranker = lambda: "fake/cross-encoder"  # type: ignore[method-assign]
+
+    async with app.run_test() as pilot:
+        await pilot.pause(0.3)
+        assert "hybrid off" in str(app.query_one("#status").render())
+
+        await pilot.press("f2")
+        await pilot.press("f3")
+        await pilot.pause(0.3)
+
+        assert app.settings.hybrid is True
+        assert app.settings.rerank is True
+        status = str(app.query_one("#status").render())
+        assert "hybrid on" in status
+        assert "rerank on" in status

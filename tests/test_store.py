@@ -114,3 +114,21 @@ def test_ingest_missing_file_reports_error(tmp_path: Path):
     result = store.ingest_file(tmp_path / "nope.md")
     assert result.chunks == 0
     assert result.error
+
+
+def test_hybrid_query_keeps_lexical_matches(tmp_path: Path):
+    store = make_store(tmp_path)
+    # HashEmbedding ignores these words, so every document has the same vector:
+    # only BM25 can tell which chunk actually contains "zebra".
+    for name in ("apple", "banana", "cherry", "zebra"):
+        document = tmp_path / f"{name}.txt"
+        document.write_text(f"{name} notes", encoding="utf-8")
+        store.ingest_file(document, size=2000, overlap=0)
+
+    ids, documents, metadatas = store.corpus()
+    assert len(ids) == len(documents) == len(metadatas) == 4
+
+    hits = store.query_hybrid("zebra", k=2, candidates=4)
+    assert Path(hits[0].source).name == "zebra.txt"
+    assert hits[0].metric == "rrf"
+    assert hits[0].score > hits[1].score

@@ -27,7 +27,19 @@ QUESTION = "How does easy-rag measure similarity, and how does it chunk document
 
 ANSWER = """easy-rag stores every chunk in Chroma with **cosine** distance, so a lower score means a closer match [1]. Documents are split into roughly 1,200-character chunks with 200 characters of overlap, and each chunk keeps its source path and page number in metadata [2].
 
-Retrieval embeds the question with the same model, pulls the five closest chunks, and pastes them into the prompt as numbered context so the answer can cite them [2]."""
+Retrieval combines that cosine search with BM25 keyword ranks, fuses both lists with reciprocal rank fusion, and reranks the best candidates with a local cross-encoder before building the prompt [2]."""
+
+
+class DemoReranker:
+    """Deterministic stand-in so the GIF does not need the ONNX model."""
+
+    model = "demo/cross-encoder"
+
+    def load(self) -> "DemoReranker":
+        return self
+
+    def score(self, query: str, documents: list[str]) -> list[float]:
+        return [max(0.05, 0.9 - index * 0.2) for index, _ in enumerate(documents)]
 
 
 def _tokens(text: str, step: int = 7) -> list[str]:
@@ -64,6 +76,14 @@ async def capture(size: tuple[int, int], out: Path) -> None:
                     node.expand()
             await pilot.pause(0.3)
             snap("startup")
+
+            # Show the optional retrieval modes on, with a fake reranker so the
+            # capture stays offline and fast.
+            app.engine.reranker = DemoReranker()
+            await pilot.press("f2")
+            await pilot.press("f3")
+            await pilot.pause(0.5)
+            snap("modes")
 
             docs = sorted((ROOT / "sample-docs").glob("*"))
             tree.marked = {path for path in docs if path.is_file()}

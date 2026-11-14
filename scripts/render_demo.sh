@@ -32,15 +32,17 @@ frames=("$work"/f*.png)
 count=${#frames[@]}
 last="${frames[$((count - 1))]}"
 
-cp "${frames[1]}" "$demo/startup.png"
-cp "${frames[2]}" "$demo/indexed.png"
+cp "$work/f01-startup.png" "$demo/startup.png"
+cp "$work/f04-indexed.png" "$demo/indexed.png"
 cp "$last" "$demo/screenshot.png"
 
 magick -loop 0 \
-    -delay 160 "${frames[0]}" "${frames[1]}" \
-    -delay 200 "${frames[2]}" \
-    -delay 240 "${frames[3]}" \
-    -delay 40 "${frames[@]:4:$((count - 5))}" \
+    -delay 320 "$work/f01-startup.png" \
+    -delay 420 "$work/f02-modes.png" \
+    -delay 220 "$work/f03-marked.png" \
+    -delay 360 "$work/f04-indexed.png" \
+    -delay 420 "$work/f05-question.png" \
+    -delay 40 "${frames[@]:5:$((count - 6))}" \
     -delay 480 "$last" \
     -colors 128 -dither None -layers Optimize \
     "$demo/demo.gif"

@@ -21,6 +21,8 @@ DEFAULT_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_CHUNK_SIZE = 1200
 DEFAULT_CHUNK_OVERLAP = 200
 DEFAULT_TOP_K = 5
+DEFAULT_CANDIDATES = 20
+DEFAULT_RERANK_MODEL = "Xenova/ms-marco-MiniLM-L-6-v2"
 DEFAULT_MAX_TOKENS = 1600
 DEFAULT_TEMPERATURE = 0.2
 DEFAULT_TIMEOUT = 180.0
@@ -91,6 +93,15 @@ def _as_float(value: object, fallback: float) -> float:
         return fallback
 
 
+def _as_bool(value: object, fallback: bool) -> bool:
+    text = str(value).strip().lower()
+    if text in {"1", "true", "yes", "on", "y", "enabled"}:
+        return True
+    if text in {"0", "false", "no", "off", "n", "disabled"}:
+        return False
+    return fallback
+
+
 @dataclass
 class Settings:
     """Everything the app needs to talk to a model and a vector store."""
@@ -103,6 +114,10 @@ class Settings:
     chunk_size: int = DEFAULT_CHUNK_SIZE
     chunk_overlap: int = DEFAULT_CHUNK_OVERLAP
     top_k: int = DEFAULT_TOP_K
+    candidates: int = DEFAULT_CANDIDATES
+    hybrid: bool = False
+    rerank: bool = False
+    rerank_model: str = DEFAULT_RERANK_MODEL
     max_tokens: int = DEFAULT_MAX_TOKENS
     temperature: float = DEFAULT_TEMPERATURE
     timeout: float = DEFAULT_TIMEOUT
@@ -145,6 +160,10 @@ class Settings:
             "EASYRAG_CHUNK_SIZE": "chunk_size",
             "EASYRAG_CHUNK_OVERLAP": "chunk_overlap",
             "EASYRAG_TOP_K": "top_k",
+            "EASYRAG_CANDIDATES": "candidates",
+            "EASYRAG_HYBRID": "hybrid",
+            "EASYRAG_RERANK": "rerank",
+            "EASYRAG_RERANK_MODEL": "rerank_model",
             "EASYRAG_MAX_TOKENS": "max_tokens",
             "EASYRAG_TEMPERATURE": "temperature",
             "EASYRAG_TIMEOUT": "timeout",
@@ -157,6 +176,10 @@ class Settings:
             "chunk_size": "chunk_size",
             "chunk_overlap": "chunk_overlap",
             "top_k": "top_k",
+            "candidates": "candidates",
+            "hybrid": "hybrid",
+            "rerank": "rerank",
+            "rerank_model": "rerank_model",
             "max_tokens": "max_tokens",
             "temperature": "temperature",
             "timeout": "timeout",
@@ -168,10 +191,12 @@ class Settings:
             value = values[key]
             if value in (None, ""):
                 continue
-            if attribute in {"chunk_size", "chunk_overlap", "top_k", "max_tokens"}:
+            if attribute in {"chunk_size", "chunk_overlap", "top_k", "candidates", "max_tokens"}:
                 setattr(self, attribute, _as_int(value, getattr(self, attribute)))
             elif attribute in {"temperature", "timeout"}:
                 setattr(self, attribute, _as_float(value, getattr(self, attribute)))
+            elif attribute in {"hybrid", "rerank"}:
+                setattr(self, attribute, _as_bool(value, getattr(self, attribute)))
             elif attribute == "db_path":
                 self.db_path = Path(str(value)).expanduser()
             else:
@@ -189,6 +214,8 @@ class Settings:
             pass
         if self.chunk_overlap >= self.chunk_size:
             self.chunk_overlap = max(0, self.chunk_size // 5)
+        self.candidates = max(self.top_k, self.candidates)
+        self.rerank_model = self.rerank_model.strip() or DEFAULT_RERANK_MODEL
         self.db_path = Path(self.db_path).expanduser()
 
     # ------------------------------------------------------------------ helpers
@@ -216,6 +243,10 @@ class Settings:
             "chunk_size": self.chunk_size,
             "chunk_overlap": self.chunk_overlap,
             "top_k": self.top_k,
+            "candidates": self.candidates,
+            "hybrid": self.hybrid,
+            "rerank": self.rerank,
+            "rerank_model": self.rerank_model,
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
             "timeout": self.timeout,
